@@ -243,7 +243,7 @@ func handleConnection(conn net.Conn){
 						}
 						newfile.content=temp1
 						file[arguments[1]]=newfile
-						fmt.Fprint(conn,"OK",ver,"\r\n")	
+						fmt.Fprint(conn,"OK ",ver,"\r\n")	
 						}else{
 							fmt.Printf("version mismathc\r\n")
 							fmt.Fprint(conn,"ERR_VERSION",file[arguments[1]].version,"\r\n")
