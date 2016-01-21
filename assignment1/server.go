@@ -10,7 +10,7 @@ import(
 "time"
 )
 var counter int64 = 0
-
+var i int64
 type Filecontent struct{
 	version int64
 	content_len int64
@@ -26,17 +26,17 @@ func parse(command string) int64{
 	fmt.Printf("**************************************************************\n\n")
 	arguments := strings.Split(command," ")
 	if len(arguments)==4 && arguments[0]=="write"{
-		if _, err := strconv.Atoi(arguments[2]); err != nil {
+		if _, err := strconv.ParseInt(arguments[2],10,64); err != nil {
     		return 5
 		}else{
-			if _, err := strconv.Atoi(arguments[3]); err != nil {
+			if _, err := strconv.ParseInt(arguments[3],10,64); err != nil {
     			return 5
 			}else{
 				return 1
 			}
 		}
 	}else if len(arguments)==3 && arguments[0]=="write"{
-		if _, err := strconv.Atoi(arguments[2]); err != nil {
+		if _, err := strconv.ParseInt(arguments[2],10,64); err != nil {
     		return 5
 		}else{
 				return 1
@@ -46,13 +46,13 @@ func parse(command string) int64{
 	}else if len(arguments)==2 && arguments[0]=="delete"{
 		return 4
 	}else if len(arguments)==5  && arguments[0]=="cas"{
-		if _, err := strconv.Atoi(arguments[2]); err != nil {
+		if _, err := strconv.ParseInt(arguments[2],10,64); err != nil {
     		return 5
 		}else{
-			if _, err := strconv.Atoi(arguments[3]); err != nil {
+			if _, err := strconv.ParseInt(arguments[3],10,64); err != nil {
     			return 5
 			}else{
-				if _, err := strconv.Atoi(arguments[4]); err != nil {
+				if _, err := strconv.ParseInt(arguments[4],10,64); err != nil {
     			return 5
 				}else{
 					return 3
@@ -60,10 +60,10 @@ func parse(command string) int64{
 			}
 		}
 	}else if len(arguments)==4  && arguments[0]=="cas"{
-		if _, err := strconv.Atoi(arguments[2]); err != nil {
+		if _, err := strconv.ParseInt(arguments[2],10,64); err != nil {
     		return 5
 		}else{
-			if _, err := strconv.Atoi(arguments[3]); err != nil {
+			if _, err := strconv.ParseInt(arguments[3],10,64); err != nil {
     			return 5
 			}else{
 				return 3
@@ -103,11 +103,11 @@ func handleConnection(conn net.Conn){
 					delete(file,arguments[1])
 					var newfile *Filecontent
 					newfile = new(Filecontent)
-					numbytes,_ :=  strconv.Atoi(arguments[2])
+					numbytes,_ :=  strconv.ParseInt(arguments[2],10,64)
 					newfile.content_len = int64(numbytes)
 					newfile.version = counter
 					if len(arguments)==4{
-						expTime,_ := strconv.Atoi(arguments[3])
+						expTime,_ := strconv.ParseInt(arguments[3],10,64)
 						if expTime != 0{
 							newfile.expiryTime = int64(expTime)
 						}else{
@@ -121,7 +121,7 @@ func handleConnection(conn net.Conn){
 					counter = counter+1
 					//file[arguments[1]] = newfile
 					var temp1 string = ""
-					for i:=0;i<numbytes;i++ {
+					for i =0;i<numbytes;i++ {
 						data,_ :=conn.Read(buffer)
 						if data==300{
 
@@ -144,14 +144,14 @@ func handleConnection(conn net.Conn){
 					fmt.Printf(string(arguments[1]))
 					fmt.Printf("\n")
 					newfile := new(Filecontent)
-					numbytes,_ :=  strconv.Atoi(arguments[2])
+					numbytes,_ :=  strconv.ParseInt(arguments[2],10,64)
 					newfile.content_len = int64(numbytes)
 					//newfile.content =  make([]byte,numbytes)
 					newfile.version = counter
 					counter = counter+1
 					newfile.expiryTime=-1
 					if len(arguments)==4{
-						expTime,_ := strconv.Atoi(arguments[3])
+						expTime,_ := strconv.ParseInt(arguments[3],10,64)
 						if expTime != 0{
 							newfile.expiryTime = int64(expTime)
 						}else{
@@ -161,7 +161,7 @@ func handleConnection(conn net.Conn){
 					newfile.starttime = time.Now() 
 					//file[arguments[1]] = newfile
 					var temp1 string = ""
-					for i:=0;i<numbytes;i++ {
+					for i=0;i<numbytes;i++ {
 						data,_ :=conn.Read(buffer)
 						if data==300{
 							
@@ -199,7 +199,7 @@ func handleConnection(conn net.Conn){
 					}else{
 					fmt.Printf("File reading successful\n")
 					fmt.Print(string(file[arguments[1]].content))
-					fmt.Fprint(conn,"CONTENTS ",file[arguments[1]].version," ",file[arguments[1]].content_len,"\r\n")
+					fmt.Fprint(conn,"CONTENTS ",file[arguments[1]].version," ",file[arguments[1]].content_len," ",file[arguments[1]].expiryTime-timeelapsed ,"\r\n")
 					fmt.Fprint(conn,file[arguments[1]].content,"\r\n")
 					}
 				}else{
@@ -214,31 +214,40 @@ func handleConnection(conn net.Conn){
 				arguments := strings.Split(command," ")
 				_,ok := file[string(arguments[1])]
 				if ok{
-					ver,_ := strconv.ParseInt(arguments[2],10,64)
-					if ver == file[arguments[1]].version{
-					delete(file,arguments[1])
-					var newfile *Filecontent
-					newfile = new(Filecontent)
-					numbytes,_ :=  strconv.Atoi(arguments[3])
-					newfile.content_len = int64(numbytes)
-					newfile.version = counter
-					counter = counter+1
-					var temp1 string = ""
-					for i:=0;i<numbytes;i++ {
-						data,_ :=conn.Read(buffer)
-						if data==300{
 
+					ver,_ := strconv.ParseInt(arguments[2],10,64)
+					d := time.Now().Sub(file[arguments[1]].starttime)
+					timeelapsed := int64(d.Seconds())
+					if (timeelapsed > file[arguments[1]].expiryTime && file[arguments[1]].expiryTime!=-1) {
+						fmt.Printf("time exceeded\n")
+						fmt.Fprint(conn,"ERR_FILE_NOT_FOUND\r\n")
+						}else if ver == file[arguments[1]].version{
+						delete(file,arguments[1])
+						var newfile *Filecontent
+						newfile = new(Filecontent)
+						numbytes,_ :=  strconv.ParseInt(arguments[3],10,64)
+						newfile.content_len = int64(numbytes)
+						newfile.version = counter
+						if len(arguments)==5{
+							newfile.expiryTime,_ = strconv.ParseInt(arguments[4],10,64)
 						}
-						character := string(buffer[0])
-						temp1 = temp1 + character 
-					}
-					newfile.content=temp1
-					file[arguments[1]]=newfile
-					fmt.Fprint(conn,"OK",ver,"\r\n")	
-					}else{
-						fmt.Printf("version mismathc\r\n")
-						fmt.Fprint(conn,"ERR_VERSION",file[arguments[1]].version,"\r\n")
-					}
+						counter = counter+1
+						var temp1 string = ""
+						for i=0;i<numbytes;i++ {
+							data,_ :=conn.Read(buffer)
+							if data==300{
+
+							}
+							character := string(buffer[0])
+							temp1 = temp1 + character 
+						}
+						newfile.content=temp1
+						file[arguments[1]]=newfile
+						fmt.Fprint(conn,"OK",ver,"\r\n")	
+						}else{
+							fmt.Printf("version mismathc\r\n")
+							fmt.Fprint(conn,"ERR_VERSION",file[arguments[1]].version,"\r\n")
+						}
 				}else{
 					fmt.Printf("File does not exist\n")
 					fmt.Fprint(conn,"ERR_FILE_NOT_FOUND\r\n")	

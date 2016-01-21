@@ -35,7 +35,7 @@ func TestTCPSimple(t *testing.T) {
 	if err != nil {
 		t.Error("Non-numeric version found")
 	}
-	time.Sleep(5*time.Second)
+
 	fmt.Fprintf(conn, "read %v\r\n", name) // try a read now
 	scanner.Scan()
 
