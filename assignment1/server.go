@@ -199,7 +199,8 @@ func handleConnection(conn net.Conn){
 					}else{
 					fmt.Printf("File reading successful\n")
 					fmt.Print(string(file[arguments[1]].content))
-					fmt.Fprint(conn,"OK ",string(file[arguments[1]].content),"\r\n")
+					fmt.Fprint(conn,"CONTENTS ",file[arguments[1]].version," ",file[arguments[1]].content_len,"\r\n")
+					fmt.Fprint(conn,file[arguments[1]].content,"\r\n")
 					}
 				}else{
 					fmt.Printf("File does not exist\n")
@@ -213,8 +214,36 @@ func handleConnection(conn net.Conn){
 				arguments := strings.Split(command," ")
 				_,ok := file[string(arguments[1])]
 				if ok{
-					
+					ver,_ := strconv.ParseInt(arguments[2],10,64)
+					if ver == file[arguments[1]].version{
+					delete(file,arguments[1])
+					var newfile *Filecontent
+					newfile = new(Filecontent)
+					numbytes,_ :=  strconv.Atoi(arguments[3])
+					newfile.content_len = int64(numbytes)
+					newfile.version = counter
+					counter = counter+1
+					var temp1 string = ""
+					for i:=0;i<numbytes;i++ {
+						data,_ :=conn.Read(buffer)
+						if data==300{
+
+						}
+						character := string(buffer[0])
+						temp1 = temp1 + character 
+					}
+					newfile.content=temp1
+					file[arguments[1]]=newfile
+					fmt.Fprint(conn,"OK",ver,"\r\n")	
+					}else{
+						fmt.Printf("version mismathc\r\n")
+						fmt.Fprint(conn,"ERR_VERSION",file[arguments[1]].version,"\r\n")
+					}
+				}else{
+					fmt.Printf("File does not exist\n")
+					fmt.Fprint(conn,"ERR_FILE_NOT_FOUND\r\n")	
 				}
+
 				FileContentLock.Unlock()
 			}else if query==4 {
 				FileContentLock.Lock()
