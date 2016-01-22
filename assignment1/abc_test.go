@@ -35,7 +35,7 @@ func TestTCPSimple(t *testing.T) {
 	if err != nil {
 		t.Error("Non-numeric version found")
 	}
-	time.Sleep(5*time.Second)
+	//time.Sleep(5*time.Second)
 	fmt.Fprintf(conn, "read %v\r\n", name) // try a read now
 	scanner.Scan()
 
@@ -43,7 +43,7 @@ func TestTCPSimple(t *testing.T) {
 	expect(t, arr[0], "CONTENTS")
 	expect(t, arr[1], fmt.Sprintf("%v", version)) // expect only accepts strings, convert int version to string
 	expect(t, arr[2], fmt.Sprintf("%v", len(contents)))
-	expect(t, arr[3], fmt.Sprintf("%v",exptime))
+	//expect(t, arr[3], fmt.Sprintf("%v",exptime))
 	scanner.Scan()
 	expect(t, contents, scanner.Text())
 }

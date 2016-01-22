@@ -266,7 +266,7 @@ func handleConnection(conn net.Conn){
 					fmt.Printf("File %s does not exist",arguments[0])
 					fmt.Fprint(conn,"ERR_FILE_NOT_FOUND\r\n")
 				}
-				FileContentLock.Unlock()
+				//FileContentLock.Unlock()
 			}else {
 				fmt.Printf("Invalid command\n")
 				fmt.Fprint(conn,"ERR_CMD_ERR\r\n")
@@ -275,8 +275,12 @@ func handleConnection(conn net.Conn){
 		}else{
 			command=command+string(temp) 
 		}
+		//FileContentLock.Unlock()
 	}
 }
+
+
+
 func serverMain(){
 	file = make(map[string]*Filecontent)
 	ln, err := net.Listen("tcp", ":8080")
