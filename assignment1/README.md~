@@ -23,16 +23,6 @@ In the test file, some basic test cases are covered.
 
 1. Writing to a file
 
-2. Reading from the written file after 5 seconds. The expiry time left is checked.
+2. 
 
-3. Reading a non-existent file.
 
-4. Comparing and swapping an existing file with correct version number.
-
-5. Comparing and swapping a non-existent file.
-
-6. Comparing and swapping with version number mismatch.
-
-7. Delete an existing file.
-
-8. Read from a non-existent file.

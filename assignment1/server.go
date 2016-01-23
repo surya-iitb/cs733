@@ -22,7 +22,7 @@ var FileContentLock sync.RWMutex
 var file map[string]*Filecontent
 
 func parse(command string) int64{
-	fmt.Printf("\nCommand - %s\n",command)
+	fmt.Printf("\nCommandbbb - %s\n",command)
 	fmt.Printf("**************************************************************\n\n")
 	arguments := strings.Split(command," ")
 	if len(arguments)==4 && arguments[0]=="write"{
@@ -208,8 +208,9 @@ func handleConnection(conn net.Conn){
 				}
 				FileContentLock.RUnlock()
 			}else if query==3 {
-				FileContentLock.Lock()
 				fmt.Printf("cas command\n")
+				FileContentLock.Lock()
+				
 				//fmt.Printf("write command\n")
 				arguments := strings.Split(command," ")
 				_,ok := file[string(arguments[1])]
@@ -230,26 +231,36 @@ func handleConnection(conn net.Conn){
 						newfile.version = counter
 						if len(arguments)==5{
 							newfile.expiryTime,_ = strconv.ParseInt(arguments[4],10,64)
+						}else{
+							newfile.expiryTime = -1
 						}
 						counter = counter+1
 						var temp1 string = ""
 						for i=0;i<numbytes;i++ {
-							data,_ :=conn.Read(buffer)
-							if data==300{
-
-							}
+							conn.Read(buffer)
+						
 							character := string(buffer[0])
 							temp1 = temp1 + character 
 						}
+						conn.Read(buffer)
+						conn.Read(buffer)
 						newfile.content=temp1
 						file[arguments[1]]=newfile
-						fmt.Fprint(conn,"OK ",ver,"\r\n")	
+						fmt.Fprint(conn,"OK ",newfile.version,"\r\n")	
 						}else{
 							fmt.Printf("version mismathc\r\n")
-							fmt.Fprint(conn,"ERR_VERSION",file[arguments[1]].version,"\r\n")
+							numbytes,_ := strconv.ParseInt(arguments[3],10,64)
+							for i=0;i<numbytes+2;i++ {
+							conn.Read(buffer) 
+							}
+							fmt.Fprint(conn,"ERR_VERSION ",file[arguments[1]].version,"\r\n")
 						}
 				}else{
 					fmt.Printf("File does not exist\n")
+					numbytes,_ := strconv.ParseInt(arguments[3],10,64)
+					for i=0;i<numbytes+2;i++ {
+							conn.Read(buffer)
+						}
 					fmt.Fprint(conn,"ERR_FILE_NOT_FOUND\r\n")	
 				}
 
@@ -260,13 +271,14 @@ func handleConnection(conn net.Conn){
 				arguments := strings.Split(command," ")
 				_,ok := file[arguments[1]]
 				if ok{
+					delete(file,arguments[1])
 					fmt.Printf("File %s deleted",arguments[1])
 					fmt.Fprint(conn,"OK\r\n")
 				}else{
 					fmt.Printf("File %s does not exist",arguments[0])
 					fmt.Fprint(conn,"ERR_FILE_NOT_FOUND\r\n")
 				}
-				//FileContentLock.Unlock()
+				FileContentLock.Unlock()
 			}else {
 				fmt.Printf("Invalid command\n")
 				fmt.Fprint(conn,"ERR_CMD_ERR\r\n")
