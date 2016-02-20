@@ -1,5 +1,5 @@
 package main
-import ("fmt")
+
 //return values
 //get output of voterequest for candidate
 type VoteReqEv struct {
@@ -9,6 +9,11 @@ type VoteReqEv struct {
 	lastLogTerm int
 	// etc
 }
+
+type Alarm struct{
+	t int
+}
+
 type Timeout struct {
 }
 
@@ -20,6 +25,18 @@ type AppendEntriesReqEv struct {
 	leaderid int
 	leaderCommit int //leader's commited index
 	// etc
+}
+
+type AppendEntriesResEv struct {
+	fromid int
+	term int
+	status bool
+}
+
+type VoteResEv struct{
+	fromid int
+	term int
+	status bool
 }
 
 type StateMachine struct {
@@ -51,15 +68,18 @@ func main() {
 	sm.ProcessEvent(Timeout{})
 } 
 
-func (sm *StateMachine) ProcessEvent (ev interface{}) (interface{}){
+func (sm *StateMachine) ProcessEvent (ev interface{}) (interface{},interface{}){
 	switch ev.(type) {
 	case AppendEntriesReqEv:
+		if sm.state=="c" || sm.state=="l"{
+			sm.state = "f"
+		}
 		cmd := ev.(AppendEntriesReqEv)
 		if sm.term < cmd.term{
-			//return sm.term,false
+			return AppendEntriesResEv{fromid: sm.id, term: sm.term, status:false},Alarm{}
 		}
 		if sm.index != cmd.prevLogIndex || sm.prevLogTerm != cmd.prevLogTerm {
-			//return sm.term,false
+			return AppendEntriesResEv{fromid: sm.id, term: sm.term, status:false},Alarm{}
 		}
 
 		for sm.index>0 && sm.lognumber[sm.index-1] >= cmd.prevLogIndex+1 && sm.term < cmd.prevLogTerm+1{
@@ -80,38 +100,46 @@ func (sm *StateMachine) ProcessEvent (ev interface{}) (interface{}){
 				sm.commitIndex = cmd.leaderCommit
 			}
 		}
+		return AppendEntriesResEv{fromid: sm.id, term: sm.term, status:true},Alarm{}
 
-		//return sm.term,true
-
-		fmt.Printf("%v\n", sm)
-	
 	case VoteReqEv:
 		cmd := ev.(VoteReqEv)
+		//var response
 		if(sm.state!="l" || sm.state !="c"){
 			if cmd.term < sm.term{
-				//return sm.term,false 
+				return VoteResEv{fromid: sm.id, term:sm.term, status:false},Alarm{}
 			} 
 			if cmd.lastLogIndex < sm.lognumber[sm.index-1]{
-				//return sm.term,false
+				return VoteResEv{fromid: sm.id, term:sm.term, status:false},Alarm{}
 			}
 			if sm.votedFor == -1 || sm.votedFor == cmd.candidateId{
-				//return term,true
+				return VoteResEv{fromid: sm.id, term:sm.term, status:true},Alarm{}
 			}
 
 		}
-		fmt.Printf("%v\n", cmd)
 	case Timeout:
-		if(sm.state!="f"){
+		if(sm.state=="f"){
 			sm.state = "c"
 			sm.term = sm.term+1
 			sm.votedFor = sm.id
-			return VoteReqEv{term: sm.term,candidateId: sm.id, lastLogIndex: sm.lognumber[sm.index-1], lastLogTerm: sm.terms[sm.index-1]}
-			// if appendentry recieved, step down
-			// if timeout, start afresh
+			return VoteReqEv{term: sm.term,candidateId: sm.id, lastLogIndex: sm.lognumber[sm.index-1], lastLogTerm: sm.terms[sm.index-1]},Alarm{}
+		}
+		if(sm.state=="c"){
+			sm.term = sm.term+1
+			sm.votedFor = sm.id
+			return VoteReqEv{term: sm.term,candidateId: sm.id, lastLogIndex: sm.lognumber[sm.index-1], lastLogTerm: sm.terms[sm.index-1]},Alarm{}
+		}
+		if(sm.state == "l"){
+			if sm.matchIndex < sm.index{
+				for sm.matchIndex < sm.index{
+					return AppendEntriesReqEv{term : sm.term, prevLogIndex: sm.lastApplied, prevLogTerm: sm.prevLogTerm, entry: sm.logs[sm.index], leaderid: sm.id, leaderCommit : sm.commitIndex},Alarm{}
+					sm.matchIndex = sm.matchIndex+1
+				}
+			}
 		}
 	// other cases
 	default: println ("Unrecognized")
 
 	}
-	return Timeout{}
+	return Timeout{},Alarm{}
 }
