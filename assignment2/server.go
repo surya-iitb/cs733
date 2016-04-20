@@ -1,8 +1,12 @@
 package main
-
+import(
+	"fmt"
+	"math"
+	"math/rand"
+)
 //return values
 //get output of voterequest for candidate
-type VoteReqEv struct {
+type VoteReq struct {
 	candidateId int
 	term int
 	lastLogIndex int
@@ -10,33 +14,37 @@ type VoteReqEv struct {
 	// etc
 }
 
-type Alarm struct{
-	t int
-}
-
 type Timeout struct {
 }
 
-type AppendEntriesReqEv struct {
+type AppendEntriesReq struct {
 	term int
 	prevLogIndex int
 	prevLogTerm int
-	entry string
+	data []string
 	leaderid int
 	leaderCommit int //leader's commited index
 	// etc
 }
 
-type AppendEntriesResEv struct {
+type AppendEntriesResp struct {
 	fromid int
 	term int
+	lastLogIndex int
 	status bool
 }
 
-type VoteResEv struct{
+type VoteResp struct{
 	fromid int
 	term int
 	status bool
+
+}
+
+
+type Append struct{
+	data []byte
+	clientid int
 }
 
 type StateMachine struct {
@@ -46,29 +54,217 @@ type StateMachine struct {
 	term int //term number
 	logs [1024]string //log entries
 	terms [1024]int //contains termnumbers for log entries
-	lognumber [1024]int //contains logentrynumber
+	lognumber [1024]int //contains log entry number
 	prevLogTerm int
 	index int //array index
 	leaderid int //currentleaderid
 	commitIndex int //highest log entry commited
-	//leaderCommit int //leader's commit index
+	leaderCommit int //leader's commit index
 	votedFor int //candidate recieving vote entry
 	lastApplied int //last log entry
-	nextIndex int //for each server, index of the next log entry to send to that server (initialized to leader last log index + 1)
+	nextIndex map[int]int //for each server, index of the next log entry to send to that server (initialized to leader last log index + 1)
 	matchIndex int //for each server, index of highest log entry known to be replicated on server
 	// etc
 }
+type Event interface{
 
-func main() {
-	// testing testing
-	//var sm1 StateMachine
-	sm := StateMachine{state: "f",id:1,term: 1,prevLogTerm: 0, index: 0,leaderid: 2, commitIndex: 0, votedFor:-1 ,lastApplied: 0  }
-	sm.ProcessEvent(AppendEntriesReqEv{term : 1, prevLogIndex: 0, prevLogTerm: 0, entry: "add 2 5", leaderid: 2, leaderCommit : 0})
-	sm.ProcessEvent(VoteReqEv{term: 2,candidateId:2 , lastLogTerm:1, lastLogIndex:1 })
-	sm.ProcessEvent(Timeout{})
+}
+type Action interface{
+
+}
+
+type Error struct{
+	err string
+}
+
+type Send struct{
+	peerId int
+	event Event
+}
+
+type Commit struct{
+	index int
+	data string
+	err Error
+}
+
+type Alarm struct{
+	t int
+}
+
+type LogStore struct{
+	index int
+	data []byte
 } 
 
-func (sm *StateMachine) ProcessEvent (ev interface{}) (interface{},interface{}){
+
+
+func handleAppend(sm *StateMachine,cmd * Append) []Action{
+	var action []Action
+	var cmt Commit
+	if sm.state=="candidate"{
+		cmt.data = string(cmd.data[:])
+		cmt.err.err = "Wait_For_Election"
+		action = append(action,cmt)
+	}else if sm.state == "follower"{
+		cmt.data = string(cmd.data[:])
+		cmt.err.err = "Sent_To_Leader"
+		action = append(action,cmt)
+		action = append(action, Send{3,Append{[]byte{'s','u','b'},cmd.clientid}})
+	}else{
+		cmt.data = string(cmd.data[:])
+		cmt.index = sm.index+1
+		cmt.err.err=""
+		action = append(action,cmt)
+		action = append(action,LogStore{sm.index+1,cmd.data})
+		for i:=0;i<len(sm.peers);i++{
+			action = append(action,Send{sm.peers[i],AppendEntriesReq{term:sm.term, prevLogIndex:sm.index,prevLogTerm:sm.term,data:[]string{string(cmd.data)},leaderid:sm.leaderid,leaderCommit:sm.commitIndex}})			
+		}
+		sm.logs[sm.index] = string(cmd.data[:])
+		sm.term = 2
+		sm.prevLogTerm = sm.term
+		sm.lognumber[sm.index] = sm.index+1
+		sm.index = sm.index+1
+		for i:=0;i<len(sm.nextIndex);i++{
+			sm.nextIndex[sm.peers[i]]=sm.nextIndex[sm.peers[i]]+1
+		}
+		sm.commitIndex = sm.commitIndex+1
+		sm.lastApplied = sm.lastApplied+1
+	}
+	return action
+}
+
+func handleAppendEntriesReq(sm *StateMachine,cmd *AppendEntriesReq) []Action{
+	var action []Action
+	var timeout int
+	timeout = int(rand.Float64()*5+5)
+	if(cmd.term<sm.term){
+		fmt.Println("fvfbg")
+		action = append(action, Send{cmd.leaderid, AppendEntriesResp{sm.id,sm.term,sm.lastApplied,false}})
+		return action
+	}
+	action = append(action,Alarm{timeout})
+	if(cmd.prevLogTerm != sm.prevLogTerm || sm.lastApplied !=cmd.prevLogIndex){
+		//fmt.Println("fvfbg")
+		action = append(action, Send{sm.leaderid, AppendEntriesResp{sm.id, sm.term, sm.lastApplied,false}})
+	}else{
+		//fmt.Println("fvfbg")
+		for i:=0;i<len(cmd.data);i++{
+			action = append(action, LogStore{sm.index,[]byte(sm.logs[i])})
+			sm.logs[sm.lastApplied+i] = cmd.data[i]
+			sm.terms[sm.lastApplied+i] = cmd.term
+			sm.lognumber[sm.lastApplied+i] = sm.index
+			sm.index++
+		}
+		sm.lastApplied = sm.lastApplied+len(cmd.data)
+		//fmt.Println(len(cmd.data))
+		sm.prevLogTerm = cmd.term
+		action = append(action, Send{sm.leaderid, AppendEntriesResp{sm.id, sm.term, sm.lastApplied, false}})
+		sm.leaderCommit = cmd.leaderCommit
+		sm.commitIndex = int(math.Min(float64(cmd.leaderCommit),float64(sm.lastApplied)))
+		var cmt Commit
+		cmt.err.err = ""
+		fmt.Println(cmd.data[len(cmd.data)-1])
+		action = append(action, Commit{sm.commitIndex,cmd.data[len(cmd.data)-1],cmt.err})
+
+	}
+
+	return action
+}
+
+func handleTimeout(sm * StateMachine) []Action{
+	var action []Action
+	timeout := int(rand.Float64()*5+5)
+	action = append(action,Alarm{timeout})
+	if(sm.state == "leader"){
+		for i:=0;i<len(sm.peers);i++{
+			action = append(action,Send{sm.peers[i],AppendEntriesReq{sm.term,sm.nextIndex[sm.peers[i]],sm.terms[sm.nextIndex[sm.peers[i]]],[]string{},sm.leaderid,sm.commitIndex}})
+		}
+	}else if sm.state=="follower" {
+		sm.state = "candidate"
+		sm.term++
+		sm.votedFor = sm.id
+		for i:=0;i<len(sm.peers);i++{
+			action = append(action,Send{sm.peers[i],VoteReq{sm.id,sm.term,sm.lastApplied,sm.prevLogTerm}})
+		}	
+	}
+	return action
+}
+
+func handleVoteReq(sm * StateMachine,cmd *VoteReq) []Action{
+	var action []Action
+	if sm.state == "follower"{
+			if(cmd.term < sm.term){
+				action = append(action,Send{cmd.candidateId,VoteResp{sm.id, sm.term, false}})
+				return action
+			}
+			if(sm.prevLogTerm > cmd.lastLogTerm) || ((sm.prevLogTerm == cmd.lastLogTerm) && (sm.lastApplied > cmd.lastLogIndex)){
+				action = append(action, Send{cmd.candidateId,VoteResp{sm.id, sm.term, false}})
+				return action
+			}
+			if(sm.votedFor != 0){
+				if(sm.votedFor != cmd.candidateId){
+					action = append(action,Send{cmd.candidateId,VoteResp{sm.id, sm.term, false}})
+					return action
+				}else{
+					sm.votedFor = cmd.candidateId
+					action = append(action,Send{cmd.candidateId,VoteResp{sm.id, sm.term, true}})
+					return action
+				}
+			}else{
+				action = append(action,Send{cmd.candidateId,VoteResp{sm.id, sm.term, true}})
+				return action
+			}
+		}else{
+			if(sm.term < cmd.term){
+				sm.state = "follower"
+				sm.term = cmd.term
+				sm.votedFor = 0
+				if (cmd.lastLogTerm < sm.prevLogTerm) || ((cmd.lastLogTerm == sm.prevLogTerm) && (sm.lastApplied > cmd.lastLogIndex)){
+					action = append(action, Send{cmd.candidateId,VoteResp{sm.id, sm.term, false}})
+					return action
+				}
+				sm.votedFor = cmd.candidateId
+				action = append(action, Send{cmd.candidateId,VoteResp{sm.id, sm.term, true}})
+				return action
+			}
+			action = append(action, Send{cmd.candidateId,VoteResp{sm.id, sm.term, false}})
+		}
+	return action
+}
+
+
+func (sm *StateMachine) ProcessEvent (ev Event) []Action{
+	var action []Action
+	switch ev.(type) {
+		case Append:
+			cmd := ev.(Append)
+			action = handleAppend(sm,&cmd)
+		case AppendEntriesReq:
+			cmd := ev.(AppendEntriesReq)
+			action = handleAppendEntriesReq(sm,&cmd)
+		case Timeout:
+			_ = ev.(Timeout)
+			action = handleTimeout(sm)
+		/*case AppendEntriesResp:
+			cmd := ev.(AppendEntriesResp)
+			action := handleAppendEntriesResp(sm,&cmd)*/
+		case VoteReq:
+			cmd := ev.(VoteReq)
+			action = handleVoteReq(sm,&cmd)
+		/*case VoteResp:
+			cmd := ev.(VoteResp)
+			action := handleVoteResp(sm,&cmd)*/
+		default:
+			//return action
+		}
+	return action
+}
+
+
+
+/*func (sm *StateMachine) ProcessEvent (ev interface{}) []Action{
+	var action []Action
 	switch ev.(type) {
 	case AppendEntriesReqEv:
 		if sm.state=="c" || sm.state=="l"{
@@ -76,7 +272,9 @@ func (sm *StateMachine) ProcessEvent (ev interface{}) (interface{},interface{}){
 		}
 		cmd := ev.(AppendEntriesReqEv)
 		if sm.term < cmd.term{
-			return AppendEntriesResEv{fromid: sm.id, term: sm.term, status:false},Alarm{}
+			action = append(action,AppendEntriesResEv{fromid: sm.id, term: sm.term, status:false})
+			action = append(action,Alarm{})
+			return action
 		}
 		if sm.index != cmd.prevLogIndex || sm.prevLogTerm != cmd.prevLogTerm {
 			return AppendEntriesResEv{fromid: sm.id, term: sm.term, status:false},Alarm{}
@@ -142,4 +340,4 @@ func (sm *StateMachine) ProcessEvent (ev interface{}) (interface{},interface{}){
 
 	}
 	return Timeout{},Alarm{}
-}
+}*/
