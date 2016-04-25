@@ -2,8 +2,37 @@ package main
 import(
 	"fmt"
 	"math"
+	"time"
 	"math/rand"
+	"github.com/cs733-iitb/log"
+	"github.com/cs733-iitb/cluster/mock"
 )
+
+type Node struct {
+	id int
+	leaderid int
+	LogDir string
+	sm *StateMachine
+	timeoutCh *time.Timer
+	server *mock.MockServer
+	CommitChannel chan *Commit
+}
+
+
+
+type ConfigRaft struct {
+	cluster []*NetConfig
+	Id int
+	LogDir string
+	ElectionTimeout  int
+	HeartbeatTimeout int
+}
+
+type NetConfig struct {
+	Id   int
+	Host string
+	Port int
+}
 //return values
 //get output of voterequest for candidate
 type VoteReq struct {
@@ -61,10 +90,13 @@ type StateMachine struct {
 	commitIndex int //highest log entry commited
 	leaderCommit int //leader's commit index
 	votedFor int //candidate recieving vote entry
+	Votes []int
+	Log	*log.Log
 	lastApplied int //last log entry
 	nextIndex map[int]int //for each server, index of the next log entry to send to that server (initialized to leader last log index + 1)
-	matchIndex [1024]int //for each server, index of highest log entry known to be replicated on server
-	// etc
+	matchIndex map[int]int //for each server, index of highest log entry known to be replicated on server
+	HeartbeatTimeout int
+	ElectionTimeout int
 }
 type Event interface{
 
@@ -97,7 +129,7 @@ type LogStore struct{
 	data []byte
 } 
 
-
+var leaderId int
 
 func handleAppend(sm *StateMachine,cmd * Append) []Action{
 	var action []Action
@@ -138,14 +170,17 @@ func handleAppendEntriesReq(sm *StateMachine,cmd *AppendEntriesReq) []Action{
 	var action []Action
 	var timeout int
 	timeout = int(rand.Float64()*5+5)
-	if (cmd.term<sm.term){
+	if(cmd.term<sm.term){
+		fmt.Println("fvfbg")
 		action = append(action, Send{cmd.leaderid, AppendEntriesResp{sm.id,sm.term,sm.lastApplied,false}})
 		return action
 	}
 	action = append(action,Alarm{timeout})
-	if (cmd.prevLogTerm != sm.prevLogTerm || sm.lastApplied !=cmd.prevLogIndex){
+	if(cmd.prevLogTerm != sm.prevLogTerm || sm.lastApplied !=cmd.prevLogIndex){
+		//fmt.Println("fvfbg")
 		action = append(action, Send{sm.leaderid, AppendEntriesResp{sm.id, sm.term, sm.lastApplied,false}})
 	}else{
+		//fmt.Println("fvfbg")
 		for i:=0;i<len(cmd.data);i++{
 			action = append(action, LogStore{sm.index,[]byte(sm.logs[i])})
 			sm.logs[sm.lastApplied+i] = cmd.data[i]
@@ -169,28 +204,29 @@ func handleAppendEntriesReq(sm *StateMachine,cmd *AppendEntriesReq) []Action{
 	return action
 }
 
-func handleAppendEntriesResp(sm *StateMachine,cmd *AppendEntriesReq) []Action{
-	var action []Action
-	if(sm.state == "leader"){
-		
-	}
-	return action
-}
-
 func handleTimeout(sm * StateMachine) []Action{
 	var action []Action
-	timeout := int(rand.Float64()*5+5)
-	action = append(action,Alarm{timeout})
 	if(sm.state == "leader"){
+		timeout := int(HeartbeatTimeout)
+		action = append(action,Alarm{timeout})
 		for i:=0;i<len(sm.peers);i++{
-			action = append(action,Send{sm.peers[i],AppendEntriesReq{sm.term,sm.nextIndex[sm.peers[i]],sm.terms[sm.nextIndex[sm.peers[i]]],[]string{},sm.leaderid,sm.commitIndex}})
+			if(sm.peers[i]!=0){
+				action = append(action,Send{sm.peers[i],AppendEntriesReq{sm.term,sm.nextIndex[sm.peers[i]],sm.terms[sm.nextIndex[sm.peers[i]]],[]string{},sm.leaderid,sm.commitIndex}})
+			}
 		}
-	}else if sm.state=="follower" {
+	}else {
+		timeout := int(rand.Float64()*sm.ElectionTimeout+ElectionTimeout)
+		action = append(action,Alarm{timeout})
 		sm.state = "candidate"
 		sm.term++
 		sm.votedFor = sm.id
+		for i:=0;i<5;i++{
+			sm.Votes = 0
+		}
 		for i:=0;i<len(sm.peers);i++{
-			action = append(action,Send{sm.peers[i],VoteReq{sm.id,sm.term,sm.lastApplied,sm.prevLogTerm}})
+			if(sm.peers[i]!=0){
+				action = append(action,Send{sm.peers[i],VoteReq{sm.id,sm.term,sm.lastApplied,sm.prevLogTerm}})
+			}
 		}	
 	}
 	return action
@@ -238,10 +274,6 @@ func handleVoteReq(sm * StateMachine,cmd *VoteReq) []Action{
 	return action
 }
 
-func handleVoteResp(sm * StateMachine,cmd *VoteResp) []Action{
-	var action []Action
-	return action
-}
 
 func (sm *StateMachine) ProcessEvent (ev Event) []Action{
 	var action []Action
@@ -255,98 +287,67 @@ func (sm *StateMachine) ProcessEvent (ev Event) []Action{
 		case Timeout:
 			_ = ev.(Timeout)
 			action = handleTimeout(sm)
-		case AppendEntriesResp:
+		/*case AppendEntriesResp:
 			cmd := ev.(AppendEntriesResp)
-			action := handleAppendEntriesResp(sm,&cmd)
+			action := handleAppendEntriesResp(sm,&cmd)*/
 		case VoteReq:
 			cmd := ev.(VoteReq)
 			action = handleVoteReq(sm,&cmd)
-		case VoteResp:
+		/*case VoteResp:
 			cmd := ev.(VoteResp)
-			action := handleVoteResp(sm,&cmd)
+			action := handleVoteResp(sm,&cmd)*/
 		default:
-			return action
+			//return action
 		}
 	return action
 }
 
 
-
-/*func (sm *StateMachine) ProcessEvent (ev interface{}) []Action{
-	var action []Action
-	switch ev.(type) {
-	case AppendEntriesReqEv:
-		if sm.state=="c" || sm.state=="l"{
-			sm.state = "f"
-		}
-		cmd := ev.(AppendEntriesReqEv)
-		if sm.term < cmd.term{
-			action = append(action,AppendEntriesResEv{fromid: sm.id, term: sm.term, status:false})
-			action = append(action,Alarm{})
-			return action
-		}
-		if sm.index != cmd.prevLogIndex || sm.prevLogTerm != cmd.prevLogTerm {
-			return AppendEntriesResEv{fromid: sm.id, term: sm.term, status:false},Alarm{}
-		}
-
-		for sm.index>0 && sm.lognumber[sm.index-1] >= cmd.prevLogIndex+1 && sm.term < cmd.prevLogTerm+1{
-			sm.index= sm.index-1
-		}
-		sm.logs[sm.index] = cmd.entry
-		sm.lognumber[sm.index] = cmd.prevLogIndex+1
-		sm.terms[sm.index] = cmd.prevLogTerm+1
-		sm.prevLogTerm = sm.term
-		sm.lastApplied = sm.index+1
-		sm.term = cmd.term
-		sm.index = sm.index+1
-
-		if cmd.leaderCommit > sm.commitIndex{
-			if cmd.leaderCommit > sm.index-1{
-				sm.commitIndex = sm.index-1
-			}else{
-				sm.commitIndex = cmd.leaderCommit
+func (rn *Node) startNode() {
+	s := rn.sm
+	for {
+		select {
+		case e := <-rn.server.Inbox():
+			actions = s.ProcessEvent(e.Msg)
+			if s.lid!=-1 && s.state=="leader" {
+				rn.lid = s.lid
+				leaderId = s.lid
 			}
-		}
-		return AppendEntriesResEv{fromid: sm.id, term: sm.term, status:true},Alarm{}
-
-	case VoteReqEv:
-		cmd := ev.(VoteReqEv)
-		//var response
-		if(sm.state!="l" || sm.state !="c"){
-			if cmd.term < sm.term{
-				return VoteResEv{fromid: sm.id, term:sm.term, status:false},Alarm{}
-			} 
-			if cmd.lastLogIndex < sm.lognumber[sm.index-1]{
-				return VoteResEv{fromid: sm.id, term:sm.term, status:false},Alarm{}
+			rn.TakeActions(actions)
+		case <-rn.timeoutCh.C:
+			s.ProcessEvent(Timeout{})
+			if s.leaderid!=-1 && s.state== "leader"{
+				rn.leaderid = s.leaderid
+				leaderId = s.leaderid
 			}
-			if sm.votedFor == -1 || sm.votedFor == cmd.candidateId{
-				return VoteResEv{fromid: sm.id, term:sm.term, status:true},Alarm{}
-			}
-
+			
+			rn.TakeAction(actions)
 		}
-	case Timeout:
-		if(sm.state=="f"){
-			sm.state = "c"
-			sm.term = sm.term+1
-			sm.votedFor = sm.id
-			return VoteReqEv{term: sm.term,candidateId: sm.id, lastLogIndex: sm.lognumber[sm.index-1], lastLogTerm: sm.terms[sm.index-1]},Alarm{}
+		if leaderId!= -1 && s.leaderid !=leaderId {
+			s.leaderid = leaderId
+			rn.leaderid = leaderId
 		}
-		if(sm.state=="c"){
-			sm.term = sm.term+1
-			sm.votedFor = sm.id
-			return VoteReqEv{term: sm.term,candidateId: sm.id, lastLogIndex: sm.lognumber[sm.index-1], lastLogTerm: sm.terms[sm.index-1]},Alarm{}
-		}
-		if(sm.state == "l"){
-			if sm.matchIndex < sm.index{
-				for sm.matchIndex < sm.index{
-					return AppendEntriesReqEv{term : sm.term, prevLogIndex: sm.lastApplied, prevLogTerm: sm.prevLogTerm, entry: sm.logs[sm.index], leaderid: sm.id, leaderCommit : sm.commitIndex},Alarm{}
-					sm.matchIndex = sm.matchIndex+1
-				}
-			}
-		}
-	// other cases
-	default: println ("Unrecognized")
-
 	}
-	return Timeout{},Alarm{}
-}*/
+}
+
+func (rn *Node) takeActions(actions Action) {
+	switch action[i].(type){
+			case Send:
+				temp := action[i].(Send)
+				expect(t,string(temp.peerId),string(sm.leaderid))
+				z := temp.event.(AppendEntriesResp)
+				expect(t,string(z.term),string(sm.term))
+				expect(t,string(z.fromid),string(1))
+				//fmt.Print(z.lastLogIndex)
+				expect(t,string(z.lastLogIndex),string(4))
+			case Alarm:
+				alarm++
+			case LogStore:
+				numlogstore++
+			case Commit:
+				temp := action[i].(Commit)
+				expect(t,string(temp.index),string(4))
+				expect(t,temp.data,"sub")
+
+		}
+}

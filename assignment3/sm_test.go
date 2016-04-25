@@ -1,185 +1,83 @@
-package main
+package main 
 
-import (
+import(
+	
 	"fmt"
+	"time"
 	"testing"
+	"strconv"
+	"github.com/cs733-iitb/log"
+	"github.com/cs733-iitb/cluster"
+	"github.com/cs733-iitb/cluster/mock"
 )
 
+var NumServers = 5
+var ETimeout = 1000
+var HeartBeat = 500
 
-/*func TestMachine(t *testing.T){
-	sm := StateMachine{state: "f",id:1,term: 1,prevLogTerm: 0, index: 0,leaderid: 2, commitIndex: 0, votedFor:-1 ,lastApplied: 0  }
-	sm.ProcessEvent(AppendEntriesReq{term : 1, prevLogIndex: 0, prevLogTerm: 0, entry: "add 2 5", leaderid: 2, leaderCommit : 0})
-	sm.ProcessEvent(VoteReq{term: 2,candidateId:2 , lastLogTerm:1, lastLogIndex:1 })
-	sm.ProcessEvent(Timeout{})
-}*/
+func makerafts() ([]*Node){
+	  
+	newconfig := cluster.Config{
+    Peers: []cluster.PeerConfig{
+        	{Id: 1, Address: "localhost:5050"},
+        	{Id: 2, Address: "localhost:6060"},
+            {Id: 3, Address: "localhost:7070"},
+            {Id: 4, Address: "localhost:8080"},
+            {Id: 5, Address: "localhost:9090"},
+        	}}
+    cl,_ := mock.NewCluster(newconfig)
+     	
+    nodes := make([]*Node, len(newconfig.Peers))
+    
+    TempConfig := ConfigRaft{
+    	LogDir: "Log",
+    	ElectionTimeout: ETimeout,
+    	HeartbeatTimeout: HeartBeat,
+    }
 
-func TestAppend(t *testing.T){
-	sm := StateMachine{state: "leader", id:7, peers:[]int{1,2,3,4,5}, term:2, prevLogTerm:1, index:2, leaderid:7, commitIndex:3, lastApplied:3, nextIndex: map[int]int{1:4,2:4,3:4,4:4,5:4} }
-	sm.logs[0]="jmp"
-	sm.logs[1]="jmpz"
-	sm.logs[2]="add"
-	for i:=0;i<3;i++{
-		sm.terms[i]=1
-		sm.lognumber[i]=i+1
-	}
-	expectedIndex := sm.index
-	expectedData :="sub"
-	numAppendEntries := 0
-	//check append for leader
-	action := sm.ProcessEvent(Append{[]byte{'s','u','b'},10})
-
-	for i :=0;i<len(action);i++{
-		switch action[i].(type){
-		case Commit:
-			temp := action[i].(Commit)
-			//expectedData = temp.data
-			//err = temp.err
-			//expectedIndex = temp.index
-			expect(t, string(temp.index),string(expectedIndex+1))
-			expect(t, temp.err.err,string(""))
-			expect(t, expectedData,temp.data)
-		case LogStore:
-			temp := action[i].(LogStore)
-			expect(t, string(temp.index),string(expectedIndex+1))
-			//expect(t, temp.err.err,string(""))
-			expect(t, expectedData,string(temp.data))
-		case Send:
-			numAppendEntries++
+    MatchIndex := map[int]int{0:-1,1:-1,2:-1,3:-1,4:-1}
+    NextIndex := map[int]int{0:1,1:0,2:0,3:0,4:0}
+    Votes  := make([]int, NumServers)
+    for i:=1; i<=NumServers;i++ { 
+    	Votes[i] = 0
+    }
+   
+    for i:=1; i<=NumServers;i++ { 
+    	RaftNode := Node{id:i, leaderid:-1, timeoutCh:time.NewTimer(time.Duration(TempConfig.ElectionTimeout)*time.Millisecond), LogDir:TempConfig.LogDir+strconv.Itoa(i), CommitChannel:make(chan *Commit,100)}
+    	log, err := log.Open(RaftNode.LogDir)
+		log.RegisterSampleEntry(LogStore{})
+		if err!=nil {
+			fmt.Println("Error opening Log File"+"i")
 		}
-	}
-	//fmt.Print(numAppendEntries)
-	expect(t, string(numAppendEntries),string(5))
+		peer := make([]int,NumServers)
+		server := cl.Servers[i]
+		p := server.Peers()
+		temp := 0
 
-	sm.state = "follower"
-	sm.term = 3
-	sm.prevLogTerm = 2
-	sm.leaderid = 5
-	action = sm.ProcessEvent(Append{[]byte{'s','u','b'},11})
-	for i :=0;i<len(action);i++{
-		switch action[i].(type){
-		case Commit:
-			temp := action[i].(Commit)
-			expect(t, temp.err.err,string("Sent_To_Leader"))
-			expect(t, expectedData,temp.data)
-		case Send:
-			temp := action[i].(Send)
-			expect(t,string(temp.peerId),string(3))
-			z := temp.event.(Append)
-			expect(t,string(z.data),expectedData)
+		for j:=0;j<NumServers;j++{ 
+			if j!=i-1{ 
+				peer[j]=0
+			}else{ 
+				peer[j]=p[temp]
+				temp++
+			}
 		}
-	}
-	sm.state = "candidate"
-	sm.term = 4
-	sm.prevLogTerm = 3
-	action = sm.ProcessEvent(Append{[]byte{'s','u','b'},12})
-	temp := action[0].(Commit)
-	expect(t, temp.err.err,string("Wait_For_Election"))
-	expect(t, expectedData,temp.data)
-	
-}
 
-func TestAppendEntriesReq(t *testing.T){
-	sm := StateMachine{state: "follower", id:1, peers:[]int{1,2,3,4,5}, term:3, prevLogTerm:2, index:3, leaderid:7, commitIndex:2, leaderCommit:2, lastApplied:2, nextIndex: map[int]int{1:3,2:3,3:3,4:3,5:3} }
-	sm.logs[0]="jmp"
-	sm.logs[1]="jmpz"
-	sm.terms[0]=2
-	sm.terms[1]=2
-	sm.lognumber[0]=1
-	sm.lognumber[1]=2
-	alarm := 0
-	numlogstore := 0
-	var logs []string
-	logs = []string{"add","sub"}
-	var action []Action
-	action = sm.ProcessEvent(AppendEntriesReq{3,sm.lastApplied,2,logs,7,4})
-	for i :=0;i<len(action);i++{
-		switch action[i].(type){
-			case Send:
-				temp := action[i].(Send)
-				expect(t,string(temp.peerId),string(sm.leaderid))
-				z := temp.event.(AppendEntriesResp)
-				expect(t,string(z.term),string(sm.term))
-				expect(t,string(z.fromid),string(1))
-				//fmt.Print(z.lastLogIndex)
-				expect(t,string(z.lastLogIndex),string(4))
-			case Alarm:
-				alarm++
-			case LogStore:
-				numlogstore++
-			case Commit:
-				temp := action[i].(Commit)
-				expect(t,string(temp.index),string(4))
-				expect(t,temp.data,"sub")
-
-		}	
-	}
-
-
-	expect(t,string(alarm),string(1))
-	expect(t,string(numlogstore),string(2))
-}
-
-func TestTimeout(t *testing.T){
-	sm := StateMachine{state: "follower", id:1, peers:[]int{1,2,3,4,7}, term:3, prevLogTerm:2, index:3, leaderid:7, commitIndex:2, leaderCommit:2, lastApplied:2, nextIndex: map[int]int{1:3,2:3,3:3,4:3,5:3} }
-	sm.logs[0]="jmp"
-	sm.logs[1]="jmpz"
-	sm.terms[0]=2
-	sm.terms[1]=2
-	sm.lognumber[0]=1
-	sm.lognumber[1]=2
-	var action []Action
-	alarm := 0
-	numevents := 0
-	action = sm.ProcessEvent(Timeout{})
-	for i :=0;i<len(action);i++{
-		switch action[i].(type){
-			case Alarm:
-				alarm++
-			case Send:
-				numevents++
-		}	
-	}
-	//fmt.Print(len(action))
-	expect(t,string(alarm),string(1))
-	expect(t,string(numevents),string(5))
-}
-
-func TestVoteReq(t *testing.T){
-	sm := StateMachine{state: "follower", id:5, peers:[]int{1,2,3,4,7}, term:3, prevLogTerm:2, index:3, leaderid:7, commitIndex:2, leaderCommit:2, lastApplied:2, nextIndex: map[int]int{1:3,2:3,3:3,4:3,5:3} }
-	sm.votedFor = 0
-	sm.logs[0] = "jmp"
-	sm.logs[1] = "jmpz"
-	sm.terms[0] = 2
-	sm.terms[1] = 2
-	sm.lognumber[0] = 1
-	sm.lognumber[1] = 2
-	var action []Action
-	numevents := 0
-	var response string
-	action = sm.ProcessEvent(VoteReq{4,3,2,2})
-	for i :=0;i<len(action);i++{
-		switch action[i].(type){
-			case Send:
-				numevents++
-				temp := action[i].(Send)
-				//fmt.Println(temp.peerId)
-				expect(t,string(temp.peerId),string(4))
-				z := temp.event.(VoteResp)
-				if(z.status == true){
-					response = "true"
-				}else{
-					response = "false"
-				}
-		}	
-	}
-	expect(t,string(response),"true")
-	expect(t,string(len(action)),string(1))
-	expect(t,string(numevents),string(1))
-	
-}
-
-func expect(t *testing.T, a string, b string) {
-	if a != b {
-		t.Error(fmt.Sprintf("Expected %v, found %v", b, a)) // t.Error is visible when running `go test -verbose`
+		RaftNode.server = server
+		RaftNode.sm = &StateMachine{state:"follower", id: server.Pid(), leaderid:-1, peers:peer, term:0, votedFor:0, Votes:Votes, commitIndex:-1, Log:log, index: -1, matchIndex:MatchIndex, nextIndex: NextIndex,HeartbeatTimeout:500,ElectionTimeout:ETimeout }
+		nodes[i-1] = &RaftNode
+    }
+    return nodes
+    for i:=0;i<5;i++{
+		fmt.Println(i) 
+		go rafts[i].startNode()
 	}
 }
+
+func TestBasic(t *testing.T){ 
+	rafts := makerafts()
+	time.Sleep(time.Second*4)
+
+}
+
+
