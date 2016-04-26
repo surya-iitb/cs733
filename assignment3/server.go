@@ -5,6 +5,7 @@ import(
 	"time"
 	"math/rand"
 	"github.com/cs733-iitb/log"
+	"github.com/cs733-iitb/cluster"
 	"github.com/cs733-iitb/cluster/mock"
 )
 
@@ -15,7 +16,7 @@ type Node struct {
 	sm *StateMachine
 	timeoutCh *time.Timer
 	server *mock.MockServer
-	CommitChannel chan *Commit
+	CommitCh chan *Commit
 }
 
 
@@ -129,30 +130,34 @@ type LogStore struct{
 	data []byte
 } 
 
+func (rn *Node) CommitChannel() chan *Commit {
+	return rn.CommitCh
+}
+
 var leaderId int
 
-func handleAppend(sm *StateMachine,cmd * Append) []Action{
+func respondAppend(sm *StateMachine,temp * Append) []Action{
 	var action []Action
 	var cmt Commit
 	if sm.state=="candidate"{
-		cmt.data = string(cmd.data[:])
+		cmt.data = string(temp.data[:])
 		cmt.err.err = "Wait_For_Election"
 		action = append(action,cmt)
 	}else if sm.state == "follower"{
-		cmt.data = string(cmd.data[:])
+		cmt.data = string(temp.data[:])
 		cmt.err.err = "Sent_To_Leader"
 		action = append(action,cmt)
-		action = append(action, Send{3,Append{[]byte{'s','u','b'},cmd.clientid}})
+		action = append(action, Send{3,Append{[]byte{'s','u','b'},temp.clientid}})
 	}else{
-		cmt.data = string(cmd.data[:])
+		cmt.data = string(temp.data[:])
 		cmt.index = sm.index+1
 		cmt.err.err=""
 		action = append(action,cmt)
-		action = append(action,LogStore{sm.index+1,cmd.data})
+		action = append(action,LogStore{sm.index+1,temp.data})
 		for i:=0;i<len(sm.peers);i++{
-			action = append(action,Send{sm.peers[i],AppendEntriesReq{term:sm.term, prevLogIndex:sm.index,prevLogTerm:sm.term,data:[]string{string(cmd.data)},leaderid:sm.leaderid,leaderCommit:sm.commitIndex}})			
+			action = append(action,Send{sm.peers[i],AppendEntriesReq{term:sm.term, prevLogIndex:sm.index,prevLogTerm:sm.term,data:[]string{string(temp.data)},leaderid:sm.leaderid,leaderCommit:sm.commitIndex}})			
 		}
-		sm.logs[sm.index] = string(cmd.data[:])
+		sm.logs[sm.index] = string(temp.data[:])
 		sm.term = 2
 		sm.prevLogTerm = sm.term
 		sm.lognumber[sm.index] = sm.index+1
@@ -166,48 +171,48 @@ func handleAppend(sm *StateMachine,cmd * Append) []Action{
 	return action
 }
 
-func handleAppendEntriesReq(sm *StateMachine,cmd *AppendEntriesReq) []Action{
+func respondAppendEntriesReq(sm *StateMachine,temp *AppendEntriesReq) []Action{
 	var action []Action
 	var timeout int
 	timeout = int(rand.Float64()*5+5)
-	if(cmd.term<sm.term){
+	if(temp.term<sm.term){
 		fmt.Println("fvfbg")
-		action = append(action, Send{cmd.leaderid, AppendEntriesResp{sm.id,sm.term,sm.lastApplied,false}})
+		action = append(action, Send{temp.leaderid, AppendEntriesResp{sm.id,sm.term,sm.lastApplied,false}})
 		return action
 	}
 	action = append(action,Alarm{timeout})
-	if(cmd.prevLogTerm != sm.prevLogTerm || sm.lastApplied !=cmd.prevLogIndex){
+	if(temp.prevLogTerm != sm.prevLogTerm || sm.lastApplied !=temp.prevLogIndex){
 		//fmt.Println("fvfbg")
 		action = append(action, Send{sm.leaderid, AppendEntriesResp{sm.id, sm.term, sm.lastApplied,false}})
 	}else{
 		//fmt.Println("fvfbg")
-		for i:=0;i<len(cmd.data);i++{
+		for i:=0;i<len(temp.data);i++{
 			action = append(action, LogStore{sm.index,[]byte(sm.logs[i])})
-			sm.logs[sm.lastApplied+i] = cmd.data[i]
-			sm.terms[sm.lastApplied+i] = cmd.term
+			sm.logs[sm.lastApplied+i] = temp.data[i]
+			sm.terms[sm.lastApplied+i] = temp.term
 			sm.lognumber[sm.lastApplied+i] = sm.index
 			sm.index++
 		}
-		sm.lastApplied = sm.lastApplied+len(cmd.data)
-		//fmt.Println(len(cmd.data))
-		sm.prevLogTerm = cmd.term
+		sm.lastApplied = sm.lastApplied+len(temp.data)
+		//fmt.Println(len(temp.data))
+		sm.prevLogTerm = temp.term
 		action = append(action, Send{sm.leaderid, AppendEntriesResp{sm.id, sm.term, sm.lastApplied, false}})
-		sm.leaderCommit = cmd.leaderCommit
-		sm.commitIndex = int(math.Min(float64(cmd.leaderCommit),float64(sm.lastApplied)))
+		sm.leaderCommit = temp.leaderCommit
+		sm.commitIndex = int(math.Min(float64(temp.leaderCommit),float64(sm.lastApplied)))
 		var cmt Commit
 		cmt.err.err = ""
-		fmt.Println(cmd.data[len(cmd.data)-1])
-		action = append(action, Commit{sm.commitIndex,cmd.data[len(cmd.data)-1],cmt.err})
+		fmt.Println(temp.data[len(temp.data)-1])
+		action = append(action, Commit{sm.commitIndex,temp.data[len(temp.data)-1],cmt.err})
 
 	}
 
 	return action
 }
 
-func handleTimeout(sm * StateMachine) []Action{
+func respondTimeout(sm * StateMachine) []Action{
 	var action []Action
 	if(sm.state == "leader"){
-		timeout := int(HeartbeatTimeout)
+		timeout := int(sm.HeartbeatTimeout)
 		action = append(action,Alarm{timeout})
 		for i:=0;i<len(sm.peers);i++{
 			if(sm.peers[i]!=0){
@@ -215,13 +220,13 @@ func handleTimeout(sm * StateMachine) []Action{
 			}
 		}
 	}else {
-		timeout := int(rand.Float64()*sm.ElectionTimeout+ElectionTimeout)
+		timeout := int(rand.Float64()*float64(sm.ElectionTimeout))+sm.ElectionTimeout
 		action = append(action,Alarm{timeout})
 		sm.state = "candidate"
 		sm.term++
 		sm.votedFor = sm.id
 		for i:=0;i<5;i++{
-			sm.Votes = 0
+			sm.Votes[i] = 0
 		}
 		for i:=0;i<len(sm.peers);i++{
 			if(sm.peers[i]!=0){
@@ -232,44 +237,44 @@ func handleTimeout(sm * StateMachine) []Action{
 	return action
 }
 
-func handleVoteReq(sm * StateMachine,cmd *VoteReq) []Action{
+func respondVoteReq(sm * StateMachine,temp *VoteReq) []Action{
 	var action []Action
 	if sm.state == "follower"{
-			if(cmd.term < sm.term){
-				action = append(action,Send{cmd.candidateId,VoteResp{sm.id, sm.term, false}})
+			if(temp.term < sm.term){
+				action = append(action,Send{temp.candidateId,VoteResp{sm.id, sm.term, false}})
 				return action
 			}
-			if(sm.prevLogTerm > cmd.lastLogTerm) || ((sm.prevLogTerm == cmd.lastLogTerm) && (sm.lastApplied > cmd.lastLogIndex)){
-				action = append(action, Send{cmd.candidateId,VoteResp{sm.id, sm.term, false}})
+			if(sm.prevLogTerm > temp.lastLogTerm) || ((sm.prevLogTerm == temp.lastLogTerm) && (sm.lastApplied > temp.lastLogIndex)){
+				action = append(action, Send{temp.candidateId,VoteResp{sm.id, sm.term, false}})
 				return action
 			}
 			if(sm.votedFor != 0){
-				if(sm.votedFor != cmd.candidateId){
-					action = append(action,Send{cmd.candidateId,VoteResp{sm.id, sm.term, false}})
+				if(sm.votedFor != temp.candidateId){
+					action = append(action,Send{temp.candidateId,VoteResp{sm.id, sm.term, false}})
 					return action
 				}else{
-					sm.votedFor = cmd.candidateId
-					action = append(action,Send{cmd.candidateId,VoteResp{sm.id, sm.term, true}})
+					sm.votedFor = temp.candidateId
+					action = append(action,Send{temp.candidateId,VoteResp{sm.id, sm.term, true}})
 					return action
 				}
 			}else{
-				action = append(action,Send{cmd.candidateId,VoteResp{sm.id, sm.term, true}})
+				action = append(action,Send{temp.candidateId,VoteResp{sm.id, sm.term, true}})
 				return action
 			}
 		}else{
-			if(sm.term < cmd.term){
+			if(sm.term < temp.term){
 				sm.state = "follower"
-				sm.term = cmd.term
+				sm.term = temp.term
 				sm.votedFor = 0
-				if (cmd.lastLogTerm < sm.prevLogTerm) || ((cmd.lastLogTerm == sm.prevLogTerm) && (sm.lastApplied > cmd.lastLogIndex)){
-					action = append(action, Send{cmd.candidateId,VoteResp{sm.id, sm.term, false}})
+				if (temp.lastLogTerm < sm.prevLogTerm) || ((temp.lastLogTerm == sm.prevLogTerm) && (sm.lastApplied > temp.lastLogIndex)){
+					action = append(action, Send{temp.candidateId,VoteResp{sm.id, sm.term, false}})
 					return action
 				}
-				sm.votedFor = cmd.candidateId
-				action = append(action, Send{cmd.candidateId,VoteResp{sm.id, sm.term, true}})
+				sm.votedFor = temp.candidateId
+				action = append(action, Send{temp.candidateId,VoteResp{sm.id, sm.term, true}})
 				return action
 			}
-			action = append(action, Send{cmd.candidateId,VoteResp{sm.id, sm.term, false}})
+			action = append(action, Send{temp.candidateId,VoteResp{sm.id, sm.term, false}})
 		}
 	return action
 }
@@ -279,23 +284,23 @@ func (sm *StateMachine) ProcessEvent (ev Event) []Action{
 	var action []Action
 	switch ev.(type) {
 		case Append:
-			cmd := ev.(Append)
-			action = handleAppend(sm,&cmd)
+			temp := ev.(Append)
+			action = respondAppend(sm,&temp)
 		case AppendEntriesReq:
-			cmd := ev.(AppendEntriesReq)
-			action = handleAppendEntriesReq(sm,&cmd)
+			temp := ev.(AppendEntriesReq)
+			action = respondAppendEntriesReq(sm,&temp)
 		case Timeout:
 			_ = ev.(Timeout)
-			action = handleTimeout(sm)
+			action = respondTimeout(sm)
 		/*case AppendEntriesResp:
-			cmd := ev.(AppendEntriesResp)
-			action := handleAppendEntriesResp(sm,&cmd)*/
+			temp := ev.(AppendEntriesResp)
+			action := respondAppendEntriesResp(sm,&temp)*/
 		case VoteReq:
-			cmd := ev.(VoteReq)
-			action = handleVoteReq(sm,&cmd)
+			temp := ev.(VoteReq)
+			action = respondVoteReq(sm,&temp)
 		/*case VoteResp:
-			cmd := ev.(VoteResp)
-			action := handleVoteResp(sm,&cmd)*/
+			temp := ev.(VoteResp)
+			action := respondVoteResp(sm,&temp)*/
 		default:
 			//return action
 		}
@@ -303,51 +308,57 @@ func (sm *StateMachine) ProcessEvent (ev Event) []Action{
 }
 
 
-func (rn *Node) startNode() {
+func (rn *Node) listenonchannel() {
 	s := rn.sm
 	for {
 		select {
 		case e := <-rn.server.Inbox():
-			actions = s.ProcessEvent(e.Msg)
-			if s.lid!=-1 && s.state=="leader" {
-				rn.lid = s.lid
-				leaderId = s.lid
+			action := s.ProcessEvent(e.Msg)
+			if s.leaderid!=-1 && s.state=="leader" {
+				rn.leaderid = s.leaderid
 			}
-			rn.TakeActions(actions)
+			rn.writechannel(action)
 		case <-rn.timeoutCh.C:
-			s.ProcessEvent(Timeout{})
+
+			action := s.ProcessEvent(Timeout{})
 			if s.leaderid!=-1 && s.state== "leader"{
 				rn.leaderid = s.leaderid
-				leaderId = s.leaderid
+				fmt.Println(rn.id)
 			}
 			
-			rn.TakeAction(actions)
-		}
-		if leaderId!= -1 && s.leaderid !=leaderId {
-			s.leaderid = leaderId
-			rn.leaderid = leaderId
+			rn.writechannel(action)
 		}
 	}
 }
 
-func (rn *Node) takeActions(actions Action) {
-	switch action[i].(type){
-			case Send:
-				temp := action[i].(Send)
-				expect(t,string(temp.peerId),string(sm.leaderid))
-				z := temp.event.(AppendEntriesResp)
-				expect(t,string(z.term),string(sm.term))
-				expect(t,string(z.fromid),string(1))
-				//fmt.Print(z.lastLogIndex)
-				expect(t,string(z.lastLogIndex),string(4))
-			case Alarm:
-				alarm++
-			case LogStore:
-				numlogstore++
-			case Commit:
-				temp := action[i].(Commit)
-				expect(t,string(temp.index),string(4))
-				expect(t,temp.data,"sub")
+func (rn *Node) writechannel(ev []Action) {
+	for i:=0;i<len(ev);i++{
+		switch ev[i].(type){
+				case Send:
+					temp := ev[i].(Send)
+					switch temp.event.(type){
+					case AppendEntriesReq:
+						Msg := temp.event.(AppendEntriesReq)
+						rn.server.Outbox() <-  &cluster.Envelope{Pid:temp.peerId, Msg:Msg}
+					case AppendEntriesResp:
+						Msg := temp.event.(AppendEntriesResp)
+						rn.server.Outbox() <-  &cluster.Envelope{Pid:temp.peerId, Msg:Msg}
+					case VoteReq:
+						Msg := temp.event.(VoteReq)
+						rn.server.Outbox() <-  &cluster.Envelope{Pid:temp.peerId, Msg:Msg}
+					case VoteResp:
+						Msg := temp.event.(VoteResp)
+						rn.server.Outbox() <-  &cluster.Envelope{Pid:temp.peerId, Msg:Msg}
+					}
+				case Alarm:
+					temp := ev[i].(Alarm)
+					rn.timeoutCh.Reset(time.Duration(temp.t)*time.Millisecond)
+				case Commit:
+					temp := ev[i].(Commit)
+					rn.CommitChannel() <- &Commit{index:temp.index,data:temp.data}
+				default:
+					
 
-		}
+			}
+	}
 }
