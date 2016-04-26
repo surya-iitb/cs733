@@ -6,13 +6,6 @@ import (
 )
 
 
-/*func TestMachine(t *testing.T){
-	sm := StateMachine{state: "f",id:1,term: 1,prevLogTerm: 0, index: 0,leaderid: 2, commitIndex: 0, votedFor:-1 ,lastApplied: 0  }
-	sm.ProcessEvent(AppendEntriesReq{term : 1, prevLogIndex: 0, prevLogTerm: 0, entry: "add 2 5", leaderid: 2, leaderCommit : 0})
-	sm.ProcessEvent(VoteReq{term: 2,candidateId:2 , lastLogTerm:1, lastLogIndex:1 })
-	sm.ProcessEvent(Timeout{})
-}*/
-
 func TestAppend(t *testing.T){
 	sm := StateMachine{state: "leader", id:7, peers:[]int{1,2,3,4,5}, term:2, prevLogTerm:1, index:2, leaderid:7, commitIndex:3, lastApplied:3, nextIndex: map[int]int{1:4,2:4,3:4,4:4,5:4} }
 	sm.logs[0]="jmp"
@@ -119,6 +112,20 @@ func TestAppendEntriesReq(t *testing.T){
 	expect(t,string(numlogstore),string(2))
 }
 
+func TestAppendEntriesResp(t *testing.T){
+	sm := StateMachine{state: "leader", id:1, peers:[]int{1,2,3,4,5}, term:3, prevLogTerm:2, index:3, leaderid:1, commitIndex:2, leaderCommit:2, lastApplied:2, nextIndex: map[int]int{1:3,2:3,3:3,4:3,5:3}, matchIndex: map[int]int{1:2,2:2,3:2,4:2,5:2}}
+	sm.logs[0]="jmp"
+	sm.logs[1]="jmpz"
+	sm.terms[0]=2
+	sm.terms[1]=2
+	sm.lognumber[0]=1
+	sm.lognumber[1]=2
+	action := sm.ProcessEvent(AppendEntriesResp{2,3,1,true})
+	//fmt.Println(len(action))
+	expect(t,string(len(action)),string(1))	
+
+}
+
 func TestTimeout(t *testing.T){
 	sm := StateMachine{state: "follower", id:1, peers:[]int{1,2,3,4,7}, term:3, prevLogTerm:2, index:3, leaderid:7, commitIndex:2, leaderCommit:2, lastApplied:2, nextIndex: map[int]int{1:3,2:3,3:3,4:3,5:3} }
 	sm.logs[0]="jmp"
@@ -145,7 +152,7 @@ func TestTimeout(t *testing.T){
 }
 
 func TestVoteReq(t *testing.T){
-	sm := StateMachine{state: "follower", id:5, peers:[]int{1,2,3,4,7}, term:3, prevLogTerm:2, index:3, leaderid:7, commitIndex:2, leaderCommit:2, lastApplied:2, nextIndex: map[int]int{1:3,2:3,3:3,4:3,5:3} }
+	sm := StateMachine{state: "follower", id:1, peers:[]int{1,2,3,4,7}, term:3, prevLogTerm:2, index:3, leaderid:7, commitIndex:2, leaderCommit:2, lastApplied:2, nextIndex: map[int]int{1:3,2:3,3:3,4:3,5:3} }
 	sm.votedFor = 0
 	sm.logs[0] = "jmp"
 	sm.logs[1] = "jmpz"
@@ -155,27 +162,28 @@ func TestVoteReq(t *testing.T){
 	sm.lognumber[1] = 2
 	var action []Action
 	numevents := 0
-	var response string
-	action = sm.ProcessEvent(VoteReq{4,3,2,2})
+	action = sm.ProcessEvent(VoteReq{7,3,2,2})
 	for i :=0;i<len(action);i++{
 		switch action[i].(type){
 			case Send:
 				numevents++
-				temp := action[i].(Send)
-				//fmt.Println(temp.peerId)
-				expect(t,string(temp.peerId),string(4))
-				z := temp.event.(VoteResp)
-				if(z.status == true){
-					response = "true"
-				}else{
-					response = "false"
-				}
 		}	
 	}
-	expect(t,string(response),"true")
 	expect(t,string(len(action)),string(1))
 	expect(t,string(numevents),string(1))
 	
+}
+
+func TestVoteResp(t *testing.T){
+	sm := StateMachine{state: "candidate", id:1, peers:[]int{1,2,3,4,5}, term:3, prevLogTerm:2, index:3, leaderid:3, commitIndex:2, leaderCommit:2, lastApplied:2, nextIndex: map[int]int{1:3,2:3,3:3,4:3,5:3}, matchIndex: map[int]int{1:2,2:2,3:2,4:2,5:2}}
+	sm.logs[0]="jmp"
+	sm.logs[1]="jmpz"
+	sm.terms[0]=2
+	sm.terms[1]=2
+	sm.lognumber[0]=1
+	sm.lognumber[1]=2
+	action := sm.ProcessEvent(VoteResp{2,3,true})
+	expect(t,string(len(action)),string(1))	
 }
 
 func expect(t *testing.T, a string, b string) {
